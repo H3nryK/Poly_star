@@ -1,175 +1,179 @@
 import { 
     query, 
     update, 
+    Canister,
+    text,
     Record, 
     StableBTreeMap, 
     Vec, 
     Result, 
     nat64, 
     ic, 
-    Opt 
+    Opt,
+    None,
+    Some,
+    bool
 } from 'azle';
 import { v4 as uuidv4 } from 'uuid';
 
 // Define the Chicken type
-type Chicken = Record<{
-    id: string;
-    breed: string;
-    age: nat64;
-    weight: number;
-    eggProduction: nat64;
-    vaccinationStatus: boolean;
-    lastHealthCheck: nat64;
-}>;
+const Chicken = Record({
+    id: text,
+    breed: text,
+    age: nat64,
+    weight: nat64,
+    eggProduction: nat64,
+    vaccinationStatus: bool,
+    lastHealthCheck: nat64
+});
 
 // Define the Feed type
-type Feed = Record<{
-    id: string;
-    name: string;
-    quantity: number;
-    purchaseDate: nat64;
-    expiryDate: nat64;
-}>;
+const Feed = Record({
+    id: text,
+    name: text,
+    quantity: nat64,
+    purchaseDate: nat64,
+    expiryDate: nat64
+});
 
 // Define storage for chickens and feed
-const chickenStorage = new StableBTreeMap<string, Chicken>(0, 44, 1024);
-const feedStorage = new StableBTreeMap<string, Feed>(1, 44, 1024);
+const chickenStorage = new StableBTreeMap<text, typeof Chicken>(0, 44, 1024);
+const feedStorage = new StableBTreeMap<text, typeof Feed>(1, 44, 1024);
 
-// CRUD operations for Chicken
+export default Canister({
+    // CRUD operations for Chicken
 
-export const getChicken = query((id: string): Result<Chicken, string> => {
-    const chickenOpt = chickenStorage.get(id);
-    if ("None" in chickenOpt) {
-        return Result.Err<Chicken, string>(`Chicken with id=${id} not found`);
-    }
-    return Result.Ok<Chicken, string>(chickenOpt.Some);
-});
+    getChicken: query([text], Result(Chicken, text), (id) => {
+        const chickenOpt = chickenStorage.get(id);
+        return chickenOpt.match({
+            Some: (chicken) => Result.Ok(chicken),
+            None: () => Result.Err(`Chicken with id=${id} not found`)
+        });
+    }),
 
-export const getAllChickens = query((): Result<Vec<Chicken>, string> => {
-    return Result.Ok(chickenStorage.values());
-});
+    getAllChickens: query([], Vec(Chicken), () => {
+        return chickenStorage.values();
+    }),
 
-export const createChicken = update((breed: string, age: nat64, weight: number, eggProduction: nat64): Result<Chicken, string> => {
-    const chicken: Chicken = {
-        id: uuidv4(),
-        breed,
-        age,
-        weight,
-        eggProduction,
-        vaccinationStatus: false,
-        lastHealthCheck: ic.time()
-    };
-    chickenStorage.insert(chicken.id, chicken);
-    return Result.Ok(chicken);
-});
+    createChicken: update([text, nat64, nat64, nat64], Result(Chicken, text), (breed, age, weight, eggProduction) => {
+        const chicken: typeof Chicken = {
+            id: uuidv4(),
+            breed,
+            age,
+            weight,
+            eggProduction,
+            vaccinationStatus: false,
+            lastHealthCheck: ic.time()
+        };
+        chickenStorage.insert(chicken.id, chicken);
+        return Result.Ok(chicken);
+    }),
 
-export const updateChicken = update((id: string, breed: string, age: nat64, weight: number, eggProduction: nat64, vaccinationStatus: boolean): Result<Chicken, string> => {
-    const existingChickenOpt = chickenStorage.get(id);
-    if ("None" in existingChickenOpt) {
-        return Result.Err<Chicken, string>(`Chicken with id=${id} not found`);
-    }
-    const updatedChicken: Chicken = {
-        ...existingChickenOpt.Some,
-        breed,
-        age,
-        weight,
-        eggProduction,
-        vaccinationStatus,
-        lastHealthCheck: ic.time()
-    };
-    chickenStorage.insert(id, updatedChicken);
-    return Result.Ok<Chicken, string>(updatedChicken);
-});
+    updateChicken: update([text, text, nat64, nat64, nat64, bool], Result(Chicken, text), (id, breed, age, weight, eggProduction, vaccinationStatus) => {
+        return chickenStorage.get(id).match({
+            Some: (existingChicken) => {
+                const updatedChicken: typeof Chicken = {
+                    ...existingChicken,
+                    breed,
+                    age,
+                    weight,
+                    eggProduction,
+                    vaccinationStatus,
+                    lastHealthCheck: ic.time()
+                };
+                chickenStorage.insert(id, updatedChicken);
+                return Result.Ok(updatedChicken);
+            },
+            None: () => Result.Err(`Chicken with id=${id} not found`)
+        });
+    }),
 
-export const deleteChicken = update((id: string): Result<Chicken, string> => {
-    const deletedChickenOpt = chickenStorage.remove(id);
-    if ("None" in deletedChickenOpt) {
-        return Result.Err<Chicken, string>(`Chicken with id=${id} not found`);
-    }
-    return Result.Ok<Chicken, string>(deletedChickenOpt.Some);
-});
+    deleteChicken: update([text], Result(Chicken, text), (id) => {
+        return chickenStorage.remove(id).match({
+            Some: (deletedChicken) => Result.Ok(deletedChicken),
+            None: () => Result.Err(`Chicken with id=${id} not found`)
+        });
+    }),
 
-// CRUD operations for Feed
+    // CRUD operations for Feed
 
-export const getFeed = query((id: string): Result<Feed, string> => {
-    const feedOpt = feedStorage.get(id);
-    if ("None" in feedOpt) {
-        return Result.Err<Feed, string>(`Feed with id=${id} not found`);
-    }
-    return Result.Ok<Feed, string>(feedOpt.Some);
-});
+    getFeed: query([text], Result(Feed, text), (id) => {
+        return feedStorage.get(id).match({
+            Some: (feed) => Result.Ok(feed),
+            None: () => Result.Err(`Feed with id=${id} not found`)
+        });
+    }),
 
-export const getAllFeeds = query((): Result<Vec<Feed>, string> => {
-    return Result.Ok(feedStorage.values());
-});
+    getAllFeeds: query([], Vec(Feed), () => {
+        return feedStorage.values();
+    }),
 
-export const createFeed = update((name: string, quantity: number, expiryDate: nat64): Result<Feed, string> => {
-    const feed: Feed = {
-        id: uuidv4(),
-        name,
-        quantity,
-        purchaseDate: ic.time(),
-        expiryDate
-    };
-    feedStorage.insert(feed.id, feed);
-    return Result.Ok(feed);
-});
+    createFeed: update([text, nat64, nat64], Result(Feed, text), (name, quantity, expiryDate) => {
+        const feed: typeof Feed = {
+            id: uuidv4(),
+            name,
+            quantity,
+            purchaseDate: ic.time(),
+            expiryDate
+        };
+        feedStorage.insert(feed.id, feed);
+        return Result.Ok(feed);
+    }),
 
-export const updateFeed = update((id: string, name: string, quantity: number, expiryDate: nat64): Result<Feed, string> => {
-    const existingFeedOpt = feedStorage.get(id);
-    if ("None" in existingFeedOpt) {
-        return Result.Err<Feed, string>(`Feed with id=${id} not found`);
-    }
-    const updatedFeed: Feed = {
-        ...existingFeedOpt.Some,
-        name,
-        quantity,
-        expiryDate
-    };
-    feedStorage.insert(id, updatedFeed);
-    return Result.Ok<Feed, string>(updatedFeed);
-});
+    updateFeed: update([text, text, nat64, nat64], Result(Feed, text), (id, name, quantity, expiryDate) => {
+        return feedStorage.get(id).match({
+            Some: (existingFeed) => {
+                const updatedFeed: typeof Feed = {
+                    ...existingFeed,
+                    name,
+                    quantity,
+                    expiryDate
+                };
+                feedStorage.insert(id, updatedFeed);
+                return Result.Ok(updatedFeed);
+            },
+            None: () => Result.Err(`Feed with id=${id} not found`)
+        });
+    }),
 
-export const deleteFeed = update((id: string): Result<Feed, string> => {
-    const deletedFeedOpt = feedStorage.remove(id);
-    if ("None" in deletedFeedOpt) {
-        return Result.Err<Feed, string>(`Feed with id=${id} not found`);
-    }
-    return Result.Ok<Feed, string>(deletedFeedOpt.Some);
-});
+    deleteFeed: update([text], Result(Feed, text), (id) => {
+        return feedStorage.remove(id).match({
+            Some: (deletedFeed) => Result.Ok(deletedFeed),
+            None: () => Result.Err(`Feed with id=${id} not found`)
+        });
+    }),
 
-// Additional features for Kenyan market
+    // Additional features for Kenyan market
 
-export const getChickensByBreed = query((breed: string): Result<Vec<Chicken>, string> => {
-    const chickens = chickenStorage.values().filter(chicken => chicken.breed === breed);
-    return Result.Ok(chickens);
-});
+    getChickensByBreed: query([text], Vec(Chicken), (breed) => {
+        return chickenStorage.values().filter(chicken => chicken.breed === breed);
+    }),
 
-export const getTotalEggProduction = query((): Result<nat64, string> => {
-    const totalEggs = chickenStorage.values().reduce((sum, chicken) => sum + chicken.eggProduction, 0n);
-    return Result.Ok(totalEggs);
-});
+    getTotalEggProduction: query([], nat64, () => {
+        return chickenStorage.values().reduce((sum, chicken) => sum + chicken.eggProduction, 0n);
+    }),
 
-export const recordVaccination = update((chickenId: string): Result<Chicken, string> => {
-    const chickenOpt = chickenStorage.get(chickenId);
-    if ("None" in chickenOpt) {
-        return Result.Err<Chicken, string>(`Chicken with id=${chickenId} not found`);
-    }
-    const updatedChicken: Chicken = {
-        ...chickenOpt.Some,
-        vaccinationStatus: true,
-        lastHealthCheck: ic.time()
-    };
-    chickenStorage.insert(chickenId, updatedChicken);
-    return Result.Ok<Chicken, string>(updatedChicken);
-});
+    recordVaccination: update([text], Result(Chicken, text), (chickenId) => {
+        return chickenStorage.get(chickenId).match({
+            Some: (chicken) => {
+                const updatedChicken: typeof Chicken = {
+                    ...chicken,
+                    vaccinationStatus: true,
+                    lastHealthCheck: ic.time()
+                };
+                chickenStorage.insert(chickenId, updatedChicken);
+                return Result.Ok(updatedChicken);
+            },
+            None: () => Result.Err(`Chicken with id=${chickenId} not found`)
+        });
+    }),
 
-export const getLowStockFeeds = query((threshold: number): Result<Vec<Feed>, string> => {
-    const lowStockFeeds = feedStorage.values().filter(feed => feed.quantity < threshold);
-    return Result.Ok(lowStockFeeds);
-});
+    getLowStockFeeds: query([nat64], Vec(Feed), (threshold) => {
+        return feedStorage.values().filter(feed => feed.quantity < threshold);
+    }),
 
-// Placeholder for a more complex function that could integrate with local weather data
-export const getWeatherBasedRecommendations = query((): string => {
-    return "Feature not yet implemented. This function will provide recommendations based on local weather conditions.";
+    // Placeholder for a more complex function that could integrate with local weather data
+    getWeatherBasedRecommendations: query([], text, () => {
+        return "Feature not yet implemented. This function will provide recommendations based on local weather conditions.";
+    })
 });
