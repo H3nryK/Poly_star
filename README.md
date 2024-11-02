@@ -52,13 +52,6 @@ A comprehensive digital solution for managing poultry farms, connecting with the
 - Financial analysis
 - Health statistics
 
-### Community Engagement
-- 👥 Discussion forums
-- Knowledge sharing
-- Market announcements
-- Event organization
-- Community support
-
 ## 🚀 Getting Started
 
 ### Prerequisites
