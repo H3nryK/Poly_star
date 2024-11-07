@@ -140,23 +140,67 @@ export default Server(() => {
     const app = express();
     app.use(express.json());
 
+    // Add a validation middleware
+    const validateInventory = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+        const { quantity, minimumThreshold, cost } = req.body;
+        if (quantity < 0 || minimumThreshold < 0 || cost < 0) {
+            return res.status(400).json({ error: "Invalid numeric values" });
+        }
+        next();
+    };
+
+    // Add auth middleware
+    const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+        const caller = ic.caller();
+        if (!caller) {
+            return res.status(401).json({ error: "Unauthorized" });
+        }
+        req.body.ownerId = caller.toString();
+        next();
+    };
+
+    // Add simple caching mechanism
+    const cache = new Map<string, {data: any, timestamp: number}>();
+    const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+    function getCachedData(key: string) {
+        const cached = cache.get(key);
+        if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
+            return cached.data;
+        }
+        return null;
+    }
+
     // Inventory Management Routes
-    app.post("/inventory", (req, res) => {
-        const inventory: Inventory = {
-            id: uuidv4(),
-            createdAt: getCurrentDate(),
-            updatedAt: null,
-            ...req.body
-        };
-        inventoryStorage.insert(inventory.id, inventory);
-        res.json(inventory);
+    app.post("/inventory", async (req, res) => {
+        try {
+            const inventory: Inventory = {
+                id: uuidv4(),
+                createdAt: getCurrentDate(),
+                updatedAt: null,
+                ...req.body
+            };
+            await inventoryStorage.insert(inventory.id, inventory);
+            res.json(inventory);
+        } catch (error) {
+            res.status(500).json({ error: "Failed to create inventory" });
+        }
     });
 
     app.get("/farms/:farmId/inventory", (req, res) => {
-        const farmId = req.params.farmId;
+        const { page = 1, limit = 10 } = req.query;
+        const skip = (Number(page) - 1) * Number(limit);
+        
         const allInventory = inventoryStorage.values();
-        const farmInventory = allInventory.filter(inv => inv.farmId === farmId);
-        res.json(farmInventory);
+        const farmInventory = allInventory
+            .filter(inv => inv.farmId === req.params.farmId)
+            .slice(skip, skip + Number(limit));
+        
+        res.json({
+            data: farmInventory,
+            page: Number(page),
+            total: allInventory.length
+        });
     });
 
     app.post("/inventory/alert-threshold", (req, res) => {
@@ -180,6 +224,10 @@ export default Server(() => {
     });
 
     app.get("/farms/:farmId/financial-report", (req, res) => {
+        const cacheKey = `financial-report-${req.params.farmId}`;
+        const cached = getCachedData(cacheKey);
+        if (cached) return res.json(cached);
+        
         const farmId = req.params.farmId;
         const { startDate, endDate } = req.query;
         const transactions = transactionsStorage.values()
@@ -192,6 +240,7 @@ export default Server(() => {
             netProfit: calculateTotal(transactions, 'sale') - calculateTotal(transactions, 'expense'),
             transactionsByCategory: groupTransactionsByCategory(transactions)
         };
+        cache.set(cacheKey, {data: report, timestamp: Date.now()});
         res.json(report);
     });
 
@@ -254,9 +303,11 @@ export default Server(() => {
             const productOpt = productsStorage.get(item.productId);
             if ("Some" in productOpt) {
                 const product = productOpt.Some;
-                product.quantity -= item.quantity;
-                product.available = product.quantity > 0;
-                productsStorage.insert(product.id, product);
+                if (product) {
+                    product.quantity -= item.quantity;
+                    product.available = product.quantity > 0;
+                    productsStorage.insert(product.id, product);
+                }
             }
         });
         
@@ -279,6 +330,16 @@ export default Server(() => {
     }
 
     function calculateMetrics(birds: Bird[], transactions: Transaction[]) {
+        if (!birds.length) {
+            return {
+                mortality_rate: 0,
+                feed_conversion_ratio: 0,
+                production_rate: 0,
+                revenue: 0,
+                expenses: 0,
+                profit_margin: 0
+            };
+        }
         const totalBirds = birds.reduce((sum, b) => sum + b.quantity, 0);
         const deadBirds = birds.filter(b => b.status === 'deceased')
             .reduce((sum, b) => sum + b.quantity, 0);
@@ -307,13 +368,17 @@ export default Server(() => {
     function calculateProfitMargin(transactions: Transaction[]): number {
         const revenue = calculateTotal(transactions, 'sale');
         const expenses = calculateTotal(transactions, 'expense');
+        if (revenue === 0) return 0;
         return ((revenue - expenses) / revenue) * 100;
     }
 
     return app.listen();
 });
 
-function getCurrentDate() {
-    const timestamp = new Number(ic.time());
-    return new Date(timestamp.valueOf() / 1000_000);
+function getCurrentDate(): Date {
+    const timestamp = Number(ic.time());
+    if (isNaN(timestamp)) {
+        throw new Error("Invalid timestamp");
+    }
+    return new Date(Math.floor(timestamp / 1_000_000));
 }
