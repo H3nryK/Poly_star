@@ -2,7 +2,28 @@ import { v4 as uuidv4 } from 'uuid';
 import { Server, StableBTreeMap, ic } from 'azle';
 import express from 'express';
 
-// Enhanced Data Models
+// Enums for Status Fields
+enum OrderStatus {
+    Pending = 'pending',
+    Confirmed = 'confirmed',
+    Shipped = 'shipped',
+    Delivered = 'delivered',
+    Cancelled = 'cancelled'
+}
+
+enum PaymentStatus {
+    Pending = 'pending',
+    Paid = 'paid',
+    Refunded = 'refunded'
+}
+
+enum TransactionType {
+    Sale = 'sale',
+    Purchase = 'purchase',
+    Expense = 'expense',
+    Investment = 'investment'
+}
+
 class Farm {
     id: string;
     ownerId: string;
@@ -67,7 +88,7 @@ class Product {
 class Transaction {
     id: string;
     farmId: string;
-    type: 'sale' | 'purchase' | 'expense' | 'investment';
+    type: TransactionType;
     category: string;
     amount: number;
     description: string;
@@ -118,8 +139,8 @@ class Order {
         price: number;
     }[];
     totalAmount: number;
-    status: 'pending' | 'confirmed' | 'shipped' | 'delivered' | 'cancelled';
-    paymentStatus: 'pending' | 'paid' | 'refunded';
+    status: OrderStatus;
+    paymentStatus: PaymentStatus;
     deliveryAddress?: string;
     deliveryDate?: Date;
     createdAt: Date;
@@ -175,8 +196,15 @@ export default Server(() => {
             updatedAt: null,
             ...req.body
         };
-        transactionsStorage.insert(transaction.id, transaction);
-        res.json(transaction);
+
+        // Validate input before processing
+        try {
+            validateTransactionInput(transaction);
+            transactionsStorage.insert(transaction.id, transaction);
+            res.json(transaction);
+        } catch (error) {
+            res.status(400).json({ error: error.message });
+        }
     });
 
     app.get("/farms/:farmId/financial-report", (req, res) => {
@@ -186,10 +214,10 @@ export default Server(() => {
             .filter(tx => tx.farmId === farmId);
         
         const report = {
-            totalSales: calculateTotal(transactions, 'sale'),
-            totalExpenses: calculateTotal(transactions, 'expense'),
-            totalInvestments: calculateTotal(transactions, 'investment'),
-            netProfit: calculateTotal(transactions, 'sale') - calculateTotal(transactions, 'expense'),
+            totalSales: calculateTotal(transactions, TransactionType.Sale),
+            totalExpenses: calculateTotal(transactions, TransactionType.Expense),
+            totalInvestments: calculateTotal(transactions, TransactionType.Investment),
+            netProfit: calculateTotal(transactions, TransactionType.Sale) - calculateTotal(transactions, TransactionType.Expense),
             transactionsByCategory: groupTransactionsByCategory(transactions)
         };
         res.json(report);
@@ -244,8 +272,8 @@ export default Server(() => {
             id: uuidv4(),
             createdAt: getCurrentDate(),
             updatedAt: null,
-            status: 'pending',
-            paymentStatus: 'pending',
+            status: OrderStatus.Pending,
+            paymentStatus: PaymentStatus.Pending,
             ...req.body
         };
         
@@ -257,63 +285,55 @@ export default Server(() => {
                 product.quantity -= item.quantity;
                 product.available = product.quantity > 0;
                 productsStorage.insert(product.id, product);
+            } else {
+                return res.status(404).json({ error: "Product not found" });
             }
         });
-        
+
         ordersStorage.insert(order.id, order);
         res.json(order);
     });
 
-    // Helper functions
-    function calculateTotal(transactions: Transaction[], type: string): number {
-        return transactions
-            .filter(tx => tx.type === type)
-            .reduce((sum, tx) => sum + tx.amount, 0);
-    }
-
-    function groupTransactionsByCategory(transactions: Transaction[]) {
-        return transactions.reduce((acc, tx) => {
-            acc[tx.category] = (acc[tx.category] || 0) + tx.amount;
-            return acc;
-        }, {} as Record<string, number>);
-    }
-
-    function calculateMetrics(birds: Bird[], transactions: Transaction[]) {
-        const totalBirds = birds.reduce((sum, b) => sum + b.quantity, 0);
-        const deadBirds = birds.filter(b => b.status === 'deceased')
-            .reduce((sum, b) => sum + b.quantity, 0);
-        
-        return {
-            mortality_rate: (deadBirds / totalBirds) * 100,
-            feed_conversion_ratio: calculateFCR(birds),
-            production_rate: calculateProductionRate(birds),
-            revenue: calculateTotal(transactions, 'sale'),
-            expenses: calculateTotal(transactions, 'expense'),
-            profit_margin: calculateProfitMargin(transactions)
-        };
-    }
-
-    function calculateFCR(birds: Bird[]): number {
-        const totalFeed = birds.reduce((sum, b) => sum + b.feedConsumption, 0);
-        const totalWeight = birds.reduce((sum, b) => sum + b.weight * b.quantity, 0);
-        return totalFeed / totalWeight;
-    }
-
-    function calculateProductionRate(birds: Bird[]): number {
-        // Implementation depends on specific production metrics
-        return 0;
-    }
-
-    function calculateProfitMargin(transactions: Transaction[]): number {
-        const revenue = calculateTotal(transactions, 'sale');
-        const expenses = calculateTotal(transactions, 'expense');
-        return ((revenue - expenses) / revenue) * 100;
-    }
-
-    return app.listen();
+    return app;
 });
 
+// Helper Functions
 function getCurrentDate() {
     const timestamp = new Number(ic.time());
-    return new Date(timestamp.valueOf() / 1000_000);
+    return new Date(timestamp.valueOf() / 1_000_000); // Fixed timestamp conversion
+}
+
+function validateTransactionInput(tx: Transaction) {
+    if (tx.amount <= 0 || !Object.values(TransactionType).includes(tx.type)) {
+        throw new Error("Invalid transaction input");
+    }
+}
+
+function calculateTotal(transactions: Transaction[], type: TransactionType): number {
+    return transactions
+        .filter(tx => tx.type === type)
+        .reduce((sum, tx) => sum + tx.amount, 0);
+}
+
+function calculateMetrics(birds: Bird[], transactions: Transaction[]) {
+    const totalBirds = birds.reduce((sum, b) => sum + b.quantity, 0);
+    const deadBirds = birds.filter(b => b.status === 'deceased').reduce((sum, b) => sum + b.quantity, 0);
+    return {
+        mortality_rate: (deadBirds / totalBirds) * 100,
+        feed_conversion_ratio: calculateFCR(birds),
+        production_rate: calculateProductionRate(birds),
+        revenue: calculateTotal(transactions, TransactionType.Sale),
+        expenses: calculateTotal(transactions, TransactionType.Expense),
+        profit_margin: calculateProfitMargin(transactions)
+    };
+}
+
+function groupTransactionsByCategory(transactions: Transaction[]) {
+    return transactions.reduce((acc, tx) => {
+        if (!acc[tx.category]) {
+            acc[tx.category] = [];
+        }
+        acc[tx.category].push(tx);
+        return acc;
+    }, {});
 }
